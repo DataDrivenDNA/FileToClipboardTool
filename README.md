@@ -47,6 +47,12 @@ A user-friendly GUI application that allows you to easily collect and copy conte
     ```bash
     pip install tkinterdnd2
     ```
+    
+    or
+   
+   ```bash
+    pip install -r requirements.txt
+    ```
 
 ## Usage
 
@@ -153,4 +159,10 @@ Setting up a virtual environment is an optional but recommended step to manage p
 
     ```bash
     pip install tkinterdnd2
+    ```
+
+   or
+   
+   ```bash
+    pip install -r requirements.txt
     ```
