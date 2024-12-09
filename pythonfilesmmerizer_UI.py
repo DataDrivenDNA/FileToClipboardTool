@@ -408,33 +408,20 @@ class PythonFilesSummarizer:
         file_count: int,
         total_characters: int
     ) -> Tuple[int, int, str]:
-        """
-        Process a single file to extract content if it's a .py or README.md file.
-
-        Args:
-            file_path (Path): The path to the file.
-            py_contents (List[str]): List to append Python file contents.
-            readme_content (str): String to store README.md content.
-            file_count (int): Current count of processed files.
-            total_characters (int): Current total characters processed.
-
-        Returns:
-            Tuple[int, int, str]: Updated file count, total characters, and readme content.
-        """
-        basename = file_path.name
         try:
-            if file_path.suffix == ".py" and basename != Path(__file__).name:
+            if file_path.suffix == ".py" and file_path.name != Path(__file__).name:
                 with file_path.open("r", encoding="utf-8") as f:
                     content = f.read()
-                    # Use ### as delimiter
-                    content_with_header = f'#filename: {basename}\n###\n{content}\n###\n'
+                    # Use absolute path instead of just filename
+                    content_with_header = f'#{file_path.absolute()}\n###\n{content}\n###\n'
                     py_contents.append(content_with_header)
                     file_count += 1
                     total_characters += len(content)
                     logger.debug(f"Processed Python file: {file_path}")
-            elif basename.lower() == "readme.md":
+            elif file_path.name.lower() == "readme.md":
                 with file_path.open("r", encoding="utf-8") as f:
-                    readme_content = f'#filename: {basename}\n###\n{f.read()}\n###\n'
+                    # Use absolute path for README as well
+                    readme_content = f'#{file_path.absolute()}\n###\n{f.read()}\n###\n'
                     file_count += 1
                     total_characters += len(readme_content)
                     logger.debug(f"Processed README file: {file_path}")
@@ -443,6 +430,7 @@ class PythonFilesSummarizer:
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}")
         return file_count, total_characters, readme_content
+
 
     def toggle_buttons(self, state: str = 'normal'):
         """
