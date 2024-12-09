@@ -1,31 +1,67 @@
-import os
-import io
 import logging
+import io
+import threading
+from pathlib import Path
+from typing import List, Tuple, Dict
+
 import tkinter as tk
 from tkinter import ttk, messagebox
 from tkinterdnd2 import DND_FILES, TkinterDnD
-from typing import List, Tuple
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler("app.log"),
-        logging.StreamHandler()
-    ]
-)
+# Configure logging with rotation to prevent log file bloating
+from logging.handlers import RotatingFileHandler
+
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.DEBUG)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+
+# File handler with rotation
+file_handler = RotatingFileHandler("app.log", maxBytes=5 * 1024 * 1024, backupCount=2)
+file_handler.setFormatter(formatter)
+file_handler.setLevel(logging.DEBUG)
+
+# Stream handler for console output
+stream_handler = logging.StreamHandler()
+stream_handler.setFormatter(formatter)
+stream_handler.setLevel(logging.INFO)
+
+logger.addHandler(file_handler)
+logger.addHandler(stream_handler)
+
 
 class ToolTip:
-    """Create a tooltip for a given widget."""
-    def __init__(self, widget, text):
+    """A tooltip that appears when hovering over a widget."""
+
+    def __init__(self, widget: tk.Widget, text: str, delay: int = 500):
+        """
+        Initialize the tooltip.
+
+        Args:
+            widget (tk.Widget): The widget to attach the tooltip to.
+            text (str): The text to display in the tooltip.
+            delay (int): Delay in milliseconds before the tooltip appears.
+        """
         self.widget = widget
         self.text = text
+        self.delay = delay
         self.tip_window = None
-        widget.bind("<Enter>", self.show_tip)
-        widget.bind("<Leave>", self.hide_tip)
+        self.id = None
+        self.widget.bind("<Enter>", self.schedule)
+        self.widget.bind("<Leave>", self.unschedule)
 
-    def show_tip(self, event=None):
+    def schedule(self, event: tk.Event = None):
+        """Schedule the tooltip to appear after a delay."""
+        self.unschedule()
+        self.id = self.widget.after(self.delay, self.show_tip)
+
+    def unschedule(self, event: tk.Event = None):
+        """Cancel the scheduled tooltip display."""
+        if self.id:
+            self.widget.after_cancel(self.id)
+            self.id = None
+        self.hide_tip()
+
+    def show_tip(self, event: tk.Event = None):
         """Display the tooltip."""
         if self.tip_window or not self.text:
             return
@@ -33,50 +69,70 @@ class ToolTip:
         x += self.widget.winfo_rootx() + 25
         y += self.widget.winfo_rooty() + 20
         self.tip_window = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)  # Remove window decorations
+        tw.wm_overrideredirect(True)
         tw.wm_geometry(f"+{x}+{y}")
-        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
-                         background="#FFFFE0", relief=tk.SOLID, borderwidth=1,
-                         font=("Segoe UI", 10))
+        label = tk.Label(
+            tw,
+            text=self.text,
+            justify=tk.LEFT,
+            background="#FFFFE0",
+            relief=tk.SOLID,
+            borderwidth=1,
+            font=("Segoe UI", 10)
+        )
         label.pack(ipadx=1)
 
-    def hide_tip(self, event=None):
+    def hide_tip(self):
         """Hide the tooltip."""
         if self.tip_window:
             self.tip_window.destroy()
             self.tip_window = None
 
+
 class ScrollableFrame(ttk.Frame):
     """A scrollable frame that can contain multiple widgets."""
-    def __init__(self, container, *args, **kwargs):
+
+    def __init__(self, container: ttk.Frame, *args, **kwargs):
+        """
+        Initialize the scrollable frame.
+
+        Args:
+            container (ttk.Frame): The parent container.
+        """
         super().__init__(container, *args, **kwargs)
         canvas = tk.Canvas(self, borderwidth=0, background="#f0f0f0")
         scrollbar = ttk.Scrollbar(self, orient="vertical", command=canvas.yview)
-        self.scrollable_frame = ttk.Frame(canvas, style="TFrame")
+        self.scrollable_frame = ttk.Frame(canvas)
 
         self.scrollable_frame.bind(
             "<Configure>",
-            lambda e: canvas.configure(
-                scrollregion=canvas.bbox("all")
-            )
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
         )
 
         canvas.create_window((0, 0), window=self.scrollable_frame, anchor="nw")
-
         canvas.configure(yscrollcommand=scrollbar.set)
 
         canvas.pack(side="left", fill="both", expand=True)
         scrollbar.pack(side="right", fill="y")
 
+
 class PythonFilesSummarizer:
     """A GUI application to summarize Python files and README.md content."""
 
     def __init__(self, root: TkinterDnD.Tk):
+        """
+        Initialize the application.
+
+        Args:
+            root (TkinterDnD.Tk): The root Tkinter window with drag-and-drop support.
+        """
         self.root = root
         self.root.title("Python Files Summarizer")
         self.root.geometry("800x600")
         self.root.minsize(700, 500)
         self.root.configure(bg="#f0f0f0")
+
+        self.file_items: Dict[Path, Dict[str, tk.Variable]] = {}
 
         self.create_widgets()
         self.setup_drag_and_drop()
@@ -86,19 +142,11 @@ class PythonFilesSummarizer:
         # Style Configuration
         style = ttk.Style(self.root)
         style.theme_use('clam')
-        style.configure("TButton",
-                        font=("Segoe UI", 10),
-                        padding=6)
-        style.configure("TLabel",
-                        font=("Segoe UI", 11))
-        style.configure("Header.TLabel",
-                        font=("Segoe UI", 16, "bold"),
-                        background="#f0f0f0")
-        style.configure("Status.TLabel",
-                        font=("Segoe UI", 10),
-                        background="#d9d9d9")
-        style.configure("TCheckbutton",
-                        font=("Segoe UI", 10))
+        style.configure("TButton", font=("Segoe UI", 10), padding=6)
+        style.configure("TLabel", font=("Segoe UI", 11))
+        style.configure("Header.TLabel", font=("Segoe UI", 16, "bold"), background="#f0f0f0")
+        style.configure("Status.TLabel", font=("Segoe UI", 10), background="#d9d9d9")
+        style.configure("TCheckbutton", font=("Segoe UI", 10))
 
         # Header Label
         header = ttk.Label(
@@ -162,18 +210,14 @@ class PythonFilesSummarizer:
         self.root.bind('<Control-x>', lambda event: self.clear_all())
 
         # Status Label
-        self.status_var = tk.StringVar()
-        self.status_var.set("Welcome! Drag and drop files to begin.")
+        self.status_var = tk.StringVar(value="Welcome! Drag and drop files to begin.")
         self.status_label = ttk.Label(
             self.root,
             textvariable=self.status_var,
             style="Status.TLabel",
             anchor="w"
         )
-        self.status_label.pack(fill=tk.X, padx=10, pady=(0,10))
-
-        # Dictionary to hold file items with their corresponding variables
-        self.file_items = {}
+        self.status_label.pack(fill=tk.X, padx=10, pady=(0, 10))
 
     def setup_drag_and_drop(self):
         """Configure drag and drop functionality."""
@@ -182,28 +226,30 @@ class PythonFilesSummarizer:
 
     def handle_drop(self, event):
         """Handle files/folders dropped into the application."""
-        logging.debug(f"Drop event triggered with data: {event.data}")
+        logger.debug(f"Drop event triggered with data: {event.data}")
         paths = self.root.tk.splitlist(event.data)
         added = False
-        for path in paths:
-            path = path.strip('"')
+        for path_str in paths:
+            path = Path(path_str.strip('"'))
             if path not in self.file_items:
                 self.add_file_item(path)
                 added = True
+            else:
+                logger.debug(f"Path already added: {path}")
         if added:
             self.status_var.set("Files added successfully.")
-            logging.info(f"Added files/folders: {paths}")
+            logger.info(f"Added files/folders: {paths}")
         else:
             self.status_var.set("No new files were added.")
         return "break"
 
-    def add_file_item(self, path: str):
+    def add_file_item(self, path: Path):
         """Add a file or folder item to the scrollable frame."""
         frame = ttk.Frame(self.scrollable_frame.scrollable_frame, padding=5, relief=tk.RIDGE)
         frame.pack(fill=tk.X, padx=5, pady=2)
 
         # Determine if path is a file or folder
-        is_folder = os.path.isdir(path)
+        is_folder = path.is_dir()
 
         # Emoji Icon
         icon = "📁" if is_folder else "📄"
@@ -216,7 +262,7 @@ class PythonFilesSummarizer:
         check.pack(side=tk.LEFT, padx=(0, 10))
 
         # File/Folder Name
-        name = os.path.basename(path) if os.path.isfile(path) else os.path.basename(os.path.normpath(path))
+        name = path.name if path.is_file() else path.name.rstrip('/')
         name_label = ttk.Label(frame, text=name, font=("Segoe UI", 10))
         name_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
@@ -226,19 +272,19 @@ class PythonFilesSummarizer:
         # Store in dictionary
         self.file_items[path] = {'var': var, 'frame': frame}
 
-    def show_context_menu(self, event, path):
+    def show_context_menu(self, event, path: Path):
         """Show a context menu for the given file/folder."""
         menu = tk.Menu(self.root, tearoff=0)
         menu.add_command(label="Remove", command=lambda p=path: self.remove_single(p))
         menu.post(event.x_root, event.y_root)
 
-    def remove_single(self, path: str):
+    def remove_single(self, path: Path):
         """Remove a single file/folder item."""
-        if path in self.file_items:
-            self.file_items[path]['frame'].destroy()
-            del self.file_items[path]
-            self.status_var.set(f"Removed: {os.path.basename(path)}")
-            logging.info(f"Removed: {path}")
+        item = self.file_items.pop(path, None)
+        if item:
+            item['frame'].destroy()
+            self.status_var.set(f"Removed: {path.name}")
+            logger.info(f"Removed: {path}")
 
     def remove_selected(self):
         """Remove all selected items from the scrollable frame."""
@@ -249,62 +295,77 @@ class PythonFilesSummarizer:
         for path in to_remove:
             self.remove_single(path)
         self.status_var.set("Selected items removed.")
+        logger.info(f"Removed selected items: {[path for path in to_remove]}")
 
     def clear_all(self):
         """Clear all items from the scrollable frame."""
         if messagebox.askyesno("Confirm Clear", "Are you sure you want to remove all items?"):
-            for path in list(self.file_items.keys()):
+            paths = list(self.file_items.keys())
+            for path in paths:
                 self.remove_single(path)
             self.status_var.set("All items cleared.")
-            logging.info("All items cleared from the list.")
+            logger.info("All items cleared from the list.")
 
     def copy_to_clipboard(self):
         """Process the selected files/folders and copy their content to the clipboard."""
         selected_paths = [path for path, item in self.file_items.items() if item['var'].get()]
         if not selected_paths:
             messagebox.showerror("Error", "Please select files or folders to copy.")
-            logging.error("No files or folders selected.")
+            logger.error("No files or folders selected.")
             return
 
+        # Disable buttons to prevent multiple operations
+        self.toggle_buttons(state='disabled')
         self.progress['maximum'] = len(selected_paths)
         self.progress['value'] = 0
         self.status_var.set("Processing files...")
-        self.root.update_idletasks()
+        logger.info(f"Starting processing of {len(selected_paths)} items.")
 
+        # Start processing in a separate thread
+        threading.Thread(target=self._process_and_copy, args=(selected_paths,), daemon=True).start()
+
+    def _process_and_copy(self, selected_paths: List[Path]):
+        """Internal method to process files and copy content to clipboard."""
         try:
             py_content, readme_content, file_count, total_characters = self.process_files(selected_paths)
         except Exception as e:
-            logging.exception("An unexpected error occurred during file processing.")
-            messagebox.showerror("Error", f"An unexpected error occurred: {e}")
-            self.status_var.set("Error during processing.")
+            logger.exception("An unexpected error occurred during file processing.")
+            self.show_error("An unexpected error occurred during processing.")
+            self.update_status("Error during processing.")
+            self.toggle_buttons(state='normal')
             return
 
-        if py_content or readme_content:
-            combined_py_content = "\n\n".join(py_content)
-            combined_content = combined_py_content + ("\n\n" + readme_content if readme_content else "")
+        combined_content = "\n\n".join(py_content)
+        if readme_content:
+            combined_content += "\n\n" + readme_content
+
+        if combined_content:
             try:
                 self.root.clipboard_clear()
                 self.root.clipboard_append(combined_content)
-                self.status_var.set(f"Copied content from {file_count} files, totaling {total_characters} characters.")
-                messagebox.showinfo("Success", f"Copied content from {file_count} files, totaling {total_characters} characters.")
-                logging.info(f"Copied content from {file_count} files, totaling {total_characters} characters.")
+                self.show_info(
+                    f"Copied content from {file_count} files, totaling {total_characters} characters."
+                )
+                logger.info(f"Copied content from {file_count} files, totaling {total_characters} characters.")
+                self.update_status(f"Copied content from {file_count} files, totaling {total_characters} characters.")
             except Exception as e:
-                logging.exception("Failed to copy content to clipboard.")
-                messagebox.showerror("Error", f"Failed to copy to clipboard: {e}")
-                self.status_var.set("Failed to copy to clipboard.")
+                logger.exception("Failed to copy content to clipboard.")
+                self.show_error(f"Failed to copy to clipboard: {e}")
+                self.update_status("Failed to copy to clipboard.")
         else:
-            messagebox.showwarning("Warning", "No eligible .py files or README.md found, or all files were unreadable.")
-            self.status_var.set("No content was copied to clipboard.")
-            logging.warning("No eligible content to copy.")
+            self.show_warning("No eligible .py files or README.md found, or all files were unreadable.")
+            self.update_status("No content was copied to clipboard.")
+            logger.warning("No eligible content to copy.")
 
         self.progress['value'] = len(selected_paths)
+        self.toggle_buttons(state='normal')
 
-    def process_files(self, file_paths: List[str]) -> Tuple[List[str], str, int, int]:
+    def process_files(self, file_paths: List[Path]) -> Tuple[List[str], str, int, int]:
         """
         Process the given file paths to extract content from .py files and README.md.
 
         Args:
-            file_paths (List[str]): A list of file or directory paths.
+            file_paths (List[Path]): A list of file or directory paths.
 
         Returns:
             Tuple[List[str], str, int, int]: A tuple containing:
@@ -313,82 +374,130 @@ class PythonFilesSummarizer:
                 - Number of processed files.
                 - Total number of characters processed.
         """
-        py_content = []
-        readme_content = ""
+        py_contents: List[str] = []
+        readme_content: str = ""
         file_count = 0
         total_characters = 0
 
-        for idx, file_path in enumerate(file_paths, start=1):
+        for idx, path in enumerate(file_paths, start=1):
             self.progress['value'] = idx - 1
             self.root.update_idletasks()
 
-            file_path = file_path.strip('"')
-            logging.debug(f"Examining file or folder: {file_path}")
+            logger.debug(f"Examining file or folder: {path}")
 
-            if os.path.isdir(file_path):
-                logging.debug(f"Processing directory: {file_path}")
-                for item in os.listdir(file_path):
-                    full_path = os.path.join(file_path, item)
-                    if os.path.isfile(full_path):
-                        file_count, total_characters = self.process_single_file(
-                            full_path, py_content, readme_content, file_count, total_characters
+            if path.is_dir():
+                logger.debug(f"Processing directory: {path}")
+                for item in path.iterdir():
+                    if item.is_file():
+                        file_count, total_characters, readme_content = self.process_single_file(
+                            item, py_contents, readme_content, file_count, total_characters
                         )
             else:
-                file_count, total_characters = self.process_single_file(
-                    file_path, py_content, readme_content, file_count, total_characters
+                file_count, total_characters, readme_content = self.process_single_file(
+                    path, py_contents, readme_content, file_count, total_characters
                 )
 
-        logging.debug(f"Processed {file_count} files with {total_characters} total characters.")
-        return py_content, readme_content, file_count, total_characters
+        logger.debug(f"Processed {file_count} files with {total_characters} total characters.")
+        return py_contents, readme_content, file_count, total_characters
 
     def process_single_file(
         self,
-        file_path: str,
-        py_content: List[str],
+        file_path: Path,
+        py_contents: List[str],
         readme_content: str,
         file_count: int,
         total_characters: int
-    ) -> Tuple[int, int]:
+    ) -> Tuple[int, int, str]:
         """
         Process a single file to extract content if it's a .py or README.md file.
 
         Args:
-            file_path (str): The path to the file.
-            py_content (List[str]): List to append Python file contents.
+            file_path (Path): The path to the file.
+            py_contents (List[str]): List to append Python file contents.
             readme_content (str): String to store README.md content.
             file_count (int): Current count of processed files.
             total_characters (int): Current total characters processed.
 
         Returns:
-            Tuple[int, int]: Updated file count and total characters.
+            Tuple[int, int, str]: Updated file count, total characters, and readme content.
         """
-        basename = os.path.basename(file_path)
+        basename = file_path.name
         try:
-            if file_path.endswith(".py") and basename != os.path.basename(__file__):
-                with io.open(file_path, "r", encoding="utf-8") as f:
+            if file_path.suffix == ".py" and basename != Path(__file__).name:
+                with file_path.open("r", encoding="utf-8") as f:
                     content = f.read()
-                    py_content.append(content)
+                    # Use ### as delimiter
+                    content_with_header = f'#filename: {basename}\n###\n{content}\n###\n'
+                    py_contents.append(content_with_header)
                     file_count += 1
                     total_characters += len(content)
-                    logging.debug(f"Processed Python file: {file_path}")
+                    logger.debug(f"Processed Python file: {file_path}")
             elif basename.lower() == "readme.md":
-                with io.open(file_path, "r", encoding="utf-8") as f:
-                    readme_content = f.read()
+                with file_path.open("r", encoding="utf-8") as f:
+                    readme_content = f'#filename: {basename}\n###\n{f.read()}\n###\n'
                     file_count += 1
                     total_characters += len(readme_content)
-                    logging.debug(f"Processed README file: {file_path}")
+                    logger.debug(f"Processed README file: {file_path}")
         except UnicodeDecodeError:
-            logging.warning(f"Unable to read {file_path} with UTF-8 encoding. Skipping this file.")
+            logger.warning(f"Unable to read {file_path} with UTF-8 encoding. Skipping this file.")
         except Exception as e:
-            logging.error(f"Error processing file {file_path}: {e}")
-        return file_count, total_characters
+            logger.error(f"Error processing file {file_path}: {e}")
+        return file_count, total_characters, readme_content
+
+    def toggle_buttons(self, state: str = 'normal'):
+        """
+        Enable or disable buttons to prevent multiple operations.
+
+        Args:
+            state (str): The state to set for the buttons ('normal' or 'disabled').
+        """
+        for button in [self.copy_button, self.remove_button, self.clear_button]:
+            button.config(state=state)
+
+    def update_status(self, message: str):
+        """
+        Update the status label.
+
+        Args:
+            message (str): The message to display.
+        """
+        self.status_var.set(message)
+
+    def show_info(self, message: str):
+        """
+        Show an information message box.
+
+        Args:
+            message (str): The message to display.
+        """
+        messagebox.showinfo("Success", message)
+
+    def show_warning(self, message: str):
+        """
+        Show a warning message box.
+
+        Args:
+            message (str): The message to display.
+        """
+        messagebox.showwarning("Warning", message)
+
+    def show_error(self, message: str):
+        """
+        Show an error message box.
+
+        Args:
+            message (str): The message to display.
+        """
+        messagebox.showerror("Error", message)
+
 
 def main():
     """Main function to run the application."""
     root = TkinterDnD.Tk()
     app = PythonFilesSummarizer(root)
-    logging.debug("Starting GUI event loop.")
+    logger.debug("Starting GUI event loop.")
     root.mainloop()
+
 
 if __name__ == "__main__":
     main()
