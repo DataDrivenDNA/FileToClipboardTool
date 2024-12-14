@@ -12,6 +12,9 @@ A user-friendly GUI application that allows you to easily collect and copy conte
   - Select/deselect individual files using checkboxes
   - Remove single files via right-click context menu
   - Clear all files with one click
+- **Output Formatting Options**:
+  - Toggle XML format for structured output
+  - Toggle filepath inclusion in output
 - **User-Friendly Interface**:
   - Progress bar shows processing status
   - Status messages keep you informed
@@ -20,29 +23,13 @@ A user-friendly GUI application that allows you to easily collect and copy conte
 - **Error Handling**:
   - Graceful handling of unreadable files
   - Comprehensive error messages
-  - Detailed logging for troubleshooting
+  - Detailed logging with rotation to prevent log bloat
 
 ## Installation
 
 1. **Ensure you have Python 3.x installed**
 
-2. **(Optional) Set Up a Virtual Environment**
-
-    Setting up a virtual environment is recommended to manage dependencies and avoid conflicts with other Python projects.
-
-    ```bash
-    # Create a virtual environment named 'venv'
-    python -m venv venv
-
-    # Activate the virtual environment
-    # On Windows:
-    venv\Scripts\activate
-
-    # On Unix or MacOS:
-    source venv/bin/activate
-    ```
-
-3. **Install required dependencies:**
+2. **Install required dependencies:**
 
     ```bash
     pip install tkinterdnd2
@@ -59,19 +46,23 @@ A user-friendly GUI application that allows you to easily collect and copy conte
 1. **Run the application:**
 
     ```bash
-    python pythonfilesummarizer_UI.py
+    python pythonfilesmmerizer_UI.py
     ```
 
 2. **Add files/folders using any of these methods:**
    - Drag and drop files/folders into the application window
    - Drag and drop multiple items simultaneously
 
-3. **Manage your files:**
+3. **Configure output format:**
+   - Use "XML Format" checkbox to toggle XML-style output
+   - Use "Filepath" checkbox to toggle inclusion of file paths
+
+4. **Manage your files:**
    - Use checkboxes to select/deselect items
-   - Right-click items for additional options
+   - Right-click items to remove them
    - Use the buttons at the bottom to perform actions
 
-4. **Copy content:**
+5. **Copy content:**
    - Select the desired files using checkboxes
    - Click "Copy to Clipboard" or press `Ctrl+C`
    - The content is now ready to paste elsewhere
@@ -87,15 +78,16 @@ A user-friendly GUI application that allows you to easily collect and copy conte
 - Built with Python's `tkinter` library
 - Uses `tkinterdnd2` for drag-and-drop functionality
 - Implements UTF-8 encoding for file reading
-- Includes comprehensive logging for debugging
+- Includes rotating log system to prevent log file bloat
+- Saves user preferences between sessions
 
 ## Logging
 
-The application creates a log file (`app.log`) that tracks:
-- File processing activities
-- Errors and exceptions
-- User actions
-- General application flow
+The application creates a log file (`app.log`) that:
+- Rotates when reaching 5MB in size
+- Keeps up to 2 backup files
+- Tracks file processing activities, errors, and user actions
+- Outputs INFO level to console and DEBUG level to file
 
 ## Requirements
 
@@ -118,51 +110,3 @@ This project is open source and available under the MIT License.
 ---
 
 For bug reports or feature requests, please open an issue on the project repository.
-
----
-
-# Optional: Setting Up a Virtual Environment (venv)
-
-Setting up a virtual environment is an optional but recommended step to manage project dependencies effectively. This helps in isolating the project's dependencies from other Python projects on your system.
-
-### Steps to Create and Activate a Virtual Environment
-
-1. **Create a Virtual Environment**
-
-    Open your terminal or command prompt and navigate to the project directory. Then, run the following command to create a virtual environment named `venv`:
-
-    ```bash
-    python -m venv venv
-    ```
-
-    This command creates a new directory called `venv` in your project folder, containing the virtual environment.
-
-2. **Activate the Virtual Environment**
-
-    - **On Windows:**
-
-        ```bash
-        venv\Scripts\activate
-        ```
-
-    - **On Unix or MacOS:**
-
-        ```bash
-        source venv/bin/activate
-        ```
-
-    After activation, your terminal prompt will typically change to indicate that the virtual environment is active, e.g., `(venv) yourname@machine:~/project$`
-
-3. **Install Dependencies**
-
-    With the virtual environment activated, install the required dependencies:
-
-    ```bash
-    pip install tkinterdnd2
-    ```
-
-   or
-   
-   ```bash
-    pip install -r requirements.txt
-    ```

@@ -2,11 +2,11 @@ import logging
 import io
 import threading
 from pathlib import Path
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional, Any, TypedDict
 
 import tkinter as tk
 from tkinter import ttk, messagebox
-from tkinterdnd2 import DND_FILES, TkinterDnD
+from tkinterdnd2 import DND_FILES, TkinterDnD  # type: ignore
 
 # Configure logging with rotation to prevent log file bloating
 from logging.handlers import RotatingFileHandler
@@ -28,6 +28,8 @@ stream_handler.setLevel(logging.INFO)
 logger.addHandler(file_handler)
 logger.addHandler(stream_handler)
 
+import json
+
 
 class ToolTip:
     """A tooltip that appears when hovering over a widget."""
@@ -44,35 +46,34 @@ class ToolTip:
         self.widget = widget
         self.text = text
         self.delay = delay
-        self.tip_window = None
-        self.id = None
+        self.tip_window: Optional[tk.Toplevel] = None
+        self.id = ""
         self.widget.bind("<Enter>", self.schedule)
         self.widget.bind("<Leave>", self.unschedule)
 
-    def schedule(self, event: tk.Event = None):
+    def schedule(self, event: Optional[Any] = None):
         """Schedule the tooltip to appear after a delay."""
         self.unschedule()
         self.id = self.widget.after(self.delay, self.show_tip)
 
-    def unschedule(self, event: tk.Event = None):
+    def unschedule(self, event: Optional[Any] = None):
         """Cancel the scheduled tooltip display."""
         if self.id:
             self.widget.after_cancel(self.id)
-            self.id = None
+            self.id = ""
         self.hide_tip()
 
-    def show_tip(self, event: tk.Event = None):
+    def show_tip(self, event: Optional[Any] = None):
         """Display the tooltip."""
         if self.tip_window or not self.text:
             return
-        x, y, _, _ = self.widget.bbox("insert")
-        x += self.widget.winfo_rootx() + 25
-        y += self.widget.winfo_rooty() + 20
-        self.tip_window = tw = tk.Toplevel(self.widget)
-        tw.wm_overrideredirect(True)
-        tw.wm_geometry(f"+{x}+{y}")
+        x = self.widget.winfo_rootx() + self.widget.winfo_width() // 2
+        y = self.widget.winfo_rooty() + self.widget.winfo_height()
+        self.tip_window = tk.Toplevel(self.widget)
+        self.tip_window.wm_overrideredirect(True)
+        self.tip_window.wm_geometry(f"+{x}+{y}")
         label = tk.Label(
-            tw,
+            self.tip_window,
             text=self.text,
             justify=tk.LEFT,
             background="#FFFFE0",
@@ -116,6 +117,11 @@ class ScrollableFrame(ttk.Frame):
         scrollbar.pack(side="right", fill="y")
 
 
+class FileItem(TypedDict):
+    var: tk.BooleanVar
+    frame: ttk.Frame
+
+
 class PythonFilesSummarizer:
     """A GUI application to summarize Python files and README.md content."""
 
@@ -127,15 +133,57 @@ class PythonFilesSummarizer:
             root (TkinterDnD.Tk): The root Tkinter window with drag-and-drop support.
         """
         self.root = root
-        self.root.title("Python Files Summarizer")
+        self.root.title("Python Files Copy Tool")
         self.root.geometry("800x600")
         self.root.minsize(700, 500)
         self.root.configure(bg="#f0f0f0")
 
-        self.file_items: Dict[Path, Dict[str, tk.Variable]] = {}
-
+        # Define settings file path
+        self.settings_file = Path.home() / '.pythonfilesmmerizer_settings.json'
+        
+        # Initialize settings with defaults
+        self.file_items: Dict[Path, FileItem] = {}
+        self.xml_format_enabled = tk.BooleanVar(value=True)
+        self.filepath_enabled = tk.BooleanVar(value=True)
+        
+        # Load saved settings
+        self.load_settings()
+        
         self.create_widgets()
         self.setup_drag_and_drop()
+        
+        # Save settings when closing the window
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+    def load_settings(self):
+        """Load settings from JSON file."""
+        try:
+            if self.settings_file.exists():
+                with open(self.settings_file, 'r') as f:
+                    settings = json.load(f)
+                    self.xml_format_enabled.set(settings.get('xml_format', True))
+                    self.filepath_enabled.set(settings.get('filepath', True))
+                    logger.info("Settings loaded successfully")
+        except Exception as e:
+            logger.error(f"Error loading settings: {e}")
+
+    def save_settings(self):
+        """Save settings to JSON file."""
+        try:
+            settings = {
+                'xml_format': self.xml_format_enabled.get(),
+                'filepath': self.filepath_enabled.get()
+            }
+            with open(self.settings_file, 'w') as f:
+                json.dump(settings, f)
+            logger.info("Settings saved successfully")
+        except Exception as e:
+            logger.error(f"Error saving settings: {e}")
+
+    def on_closing(self):
+        """Handle window closing event."""
+        self.save_settings()
+        self.root.destroy()
 
     def create_widgets(self):
         """Create and arrange widgets in the main window."""
@@ -204,10 +252,33 @@ class PythonFilesSummarizer:
         self.clear_button.pack(side=tk.LEFT, padx=5)
         ToolTip(self.clear_button, "Clear all items from the list (Ctrl+X)")
 
+        # XML Format Toggle Button
+        self.xml_toggle_button = ttk.Checkbutton(
+            button_frame,
+            text="XML Format",
+            variable=self.xml_format_enabled,
+            command=self.toggle_xml_format
+        )
+        self.xml_toggle_button.pack(side=tk.LEFT, padx=5)
+        ToolTip(self.xml_toggle_button, "Toggle XML format for output")
+
+        # Filepath Toggle Button
+        self.filepath_toggle_button = ttk.Checkbutton(
+            button_frame,
+            text="Filepath",
+            variable=self.filepath_enabled,
+            command=self.toggle_filepath
+        )
+        self.filepath_toggle_button.pack(side=tk.LEFT, padx=5)
+        ToolTip(self.filepath_toggle_button, "Toggle filepath in output")
+
         # Configure keyboard shortcuts
-        self.root.bind('<Control-c>', lambda event: self.copy_to_clipboard())
-        self.root.bind('<Delete>', lambda event: self.remove_selected())
-        self.root.bind('<Control-x>', lambda event: self.clear_all())
+        self.root.bind('<Control-c>', 
+            lambda event: self.copy_to_clipboard())  # type: ignore
+        self.root.bind('<Delete>', 
+            lambda event: self.remove_selected())  # type: ignore
+        self.root.bind('<Control-x>', 
+            lambda event: self.clear_all())  # type: ignore
 
         # Status Label
         self.status_var = tk.StringVar(value="Welcome! Drag and drop files to begin.")
@@ -267,7 +338,8 @@ class PythonFilesSummarizer:
         name_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
         # Bind right-click for context menu
-        name_label.bind("<Button-3>", lambda e, p=path: self.show_context_menu(e, p))
+        name_label.bind("<Button-3>", 
+            lambda e: self.show_context_menu(e, path))  # type: ignore
 
         # Store in dictionary
         self.file_items[path] = {'var': var, 'frame': frame}
@@ -275,7 +347,8 @@ class PythonFilesSummarizer:
     def show_context_menu(self, event, path: Path):
         """Show a context menu for the given file/folder."""
         menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Remove", command=lambda p=path: self.remove_single(p))
+        menu.add_command(label="Remove", 
+            command=lambda: self.remove_single(path))  # type: ignore
         menu.post(event.x_root, event.y_root)
 
     def remove_single(self, path: Path):
@@ -343,9 +416,6 @@ class PythonFilesSummarizer:
             try:
                 self.root.clipboard_clear()
                 self.root.clipboard_append(combined_content)
-                self.show_info(
-                    f"Copied content from {file_count} files, totaling {total_characters} characters."
-                )
                 logger.info(f"Copied content from {file_count} files, totaling {total_characters} characters.")
                 self.update_status(f"Copied content from {file_count} files, totaling {total_characters} characters.")
             except Exception as e:
@@ -409,28 +479,74 @@ class PythonFilesSummarizer:
         total_characters: int
     ) -> Tuple[int, int, str]:
         try:
-            if file_path.suffix == ".py" and file_path.name != Path(__file__).name:
+            current_file_path = Path(__file__).resolve()
+            if file_path.resolve() != current_file_path and file_path.suffix == ".py":
                 with file_path.open("r", encoding="utf-8") as f:
                     content = f.read()
-                    # Use absolute path instead of just filename
-                    content_with_header = f'#{file_path.absolute()}\n###\n{content}\n###\n'
+                    content_with_header = ""
+                    # Structure the content with XML tags if enabled
+                    if self.xml_format_enabled.get():
+                        content_with_header += f'<file_info>\n'
+                        if self.filepath_enabled.get():
+                            content_with_header += f'  <path>{file_path.absolute()}</path>\n'
+                        content_with_header += f'  <type>python</type>\n'
+                        content_with_header += f'</file_info>\n'
+                        content_with_header += f'<content>\n{content}\n</content>\n\n'
+                    else:
+                        if self.filepath_enabled.get():
+                            content_with_header += f'# {file_path.absolute()}\n'
+                        content_with_header += f'{content}\n\n'
                     py_contents.append(content_with_header)
                     file_count += 1
                     total_characters += len(content)
-                    logger.debug(f"Processed Python file: {file_path}")
+                    logger.debug(f"Content structure for {file_path}:\n{content_with_header}")
             elif file_path.name.lower() == "readme.md":
                 with file_path.open("r", encoding="utf-8") as f:
-                    # Use absolute path for README as well
-                    readme_content = f'#{file_path.absolute()}\n###\n{f.read()}\n###\n'
+                    content = f.read()
+                    # Structure README content with XML tags if enabled
+                    readme_header = ""
+                    if self.xml_format_enabled.get():
+                        readme_header += f'<file_info>\n'
+                        if self.filepath_enabled.get():
+                            readme_header += f'  <path>{file_path.absolute()}</path>\n'
+                        readme_header += f'  <type>readme</type>\n'
+                        readme_header += f'</file_info>\n'
+                        readme_header += f'<content>\n{content}\n</content>\n\n'
+                    else:
+                        if self.filepath_enabled.get():
+                            readme_header += f'# {file_path.absolute()}\n'
+                        readme_header += f'{content}\n\n'
+                    readme_content = readme_header
                     file_count += 1
-                    total_characters += len(readme_content)
-                    logger.debug(f"Processed README file: {file_path}")
+                    total_characters += len(content)
+                    logger.debug(f"Content structure for README:\n{readme_content}")
         except UnicodeDecodeError:
             logger.warning(f"Unable to read {file_path} with UTF-8 encoding. Skipping this file.")
+            self.show_error(f"Unable to read {file_path} with UTF-8 encoding. Skipping this file.")
         except Exception as e:
             logger.error(f"Error processing file {file_path}: {e}")
+            self.show_error(f"Error processing file {file_path}: {e}")
         return file_count, total_characters, readme_content
 
+    def toggle_xml_format(self):
+        """Toggle the XML format on or off."""
+        if self.xml_format_enabled.get():
+            self.status_var.set("XML format enabled.")
+            logger.info("XML format enabled.")
+        else:
+            self.status_var.set("XML format disabled.")
+            logger.info("XML format disabled.")
+        self.save_settings()
+
+    def toggle_filepath(self):
+        """Toggle the filepath on or off."""
+        if self.filepath_enabled.get():
+            self.status_var.set("Filepath enabled.")
+            logger.info("Filepath enabled.")
+        else:
+            self.status_var.set("Filepath disabled.")
+            logger.info("Filepath disabled.")
+        self.save_settings()
 
     def toggle_buttons(self, state: str = 'normal'):
         """
