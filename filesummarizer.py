@@ -1,23 +1,20 @@
 import logging
 import json
-import io
 import threading
 from pathlib import Path
-from typing import List, Tuple, Dict, TypedDict, Optional, Any, Generator
+from typing import List, Tuple, Dict, TypedDict, Any
 import tkinter as tk
-from tkinter import ttk, messagebox, PhotoImage
+from tkinter import ttk, messagebox
 from tkinterdnd2 import DND_FILES  # type: ignore
-from PIL import Image, ImageTk  # Ensure Pillow is installed
 
 from tooltip import ToolTip
-from scrollable_frame import ScrollableFrame
 
 logger = logging.getLogger(__name__)
 
 class FileItem(TypedDict):
-    var: tk.BooleanVar
-    frame: ttk.Frame
+    path: Path
     type: str
+    selected: tk.BooleanVar
 
 class FilesSummarizer:
     """A GUI application to summarize Python, TypeScript, TSX, CSS files and README.md content."""
@@ -31,12 +28,26 @@ class FilesSummarizer:
 
         self.settings_file = Path.home() / '.filesummarizer_settings.json'
         
-        self.file_items: Dict[Path, FileItem] = {}
+        self.file_items: Dict[str, FileItem] = {}  # Changed to use tree IDs
+        self.path_to_id: Dict[Path, str] = {}  # Map paths to tree IDs
+        
         self.xml_format_enabled = tk.BooleanVar(value=True)
         self.filepath_enabled = tk.BooleanVar(value=True)
         
-        self.load_settings()
+        self.symbols = {
+            'folder': "📁",
+            'python': "🐍",
+            'typescript': "📘",
+            'typescriptx': "📗",
+            'css': "🎨",
+            'readme': "📄",
+            'unknown': "❓",
+            'info': "ℹ️",
+            'warning': "⚠️",
+            'error': "❌",
+        }
         
+        self.load_settings()
         self.create_widgets()
         self.setup_drag_and_drop()
         
@@ -78,19 +89,8 @@ class FilesSummarizer:
         style.configure("Status.TLabel", font=("Segoe UI", 10), background="#d9d9d9")
         style.configure("TCheckbutton", font=("Segoe UI", 10))
         style.configure("Hovered.TButton", background='#e0e0e0')
-
-        self.symbols = {
-            'folder': "📁",
-            'python': "🐍",
-            'typescript': "📘",
-            'typescriptx': "📗",
-            'css': "🎨",
-            'readme': "📄",
-            'unknown': "❓",
-            'info': "ℹ️",
-            'warning': "⚠️",
-            'error': "❌",
-        }
+        style.configure("Treeview", font=("Segoe UI", 10))
+        style.configure("Treeview.Heading", font=("Segoe UI", 10, "bold"))
 
         # Header
         header = ttk.Label(self.root, text="Files Summarizer", style="Header.TLabel")
@@ -104,9 +104,33 @@ class FilesSummarizer:
         )
         instruction.pack(pady=(0, 10), padx=10, anchor="w")
 
-        # Initialize ScrollableFrame
-        self.scrollable_frame = ScrollableFrame(self.root)
-        self.scrollable_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        # Tree Frame with Scrollbars
+        tree_frame = ttk.Frame(self.root)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+
+        # Create TreeView
+        self.tree = ttk.Treeview(
+            tree_frame,
+            columns=("type", "path"),
+            show="tree headings",
+            selectmode="extended"  # Changed from "none" to "extended"
+    )
+        # Scrollbars
+        vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
+        hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
+        self.tree.configure(yscrollcommand=vsb.set, xscrollcommand=hsb.set)
+
+        # Grid layout for tree and scrollbars
+        self.tree.grid(column=0, row=0, sticky='nsew')
+        vsb.grid(column=1, row=0, sticky='ns')
+        hsb.grid(column=0, row=1, sticky='ew')
+        tree_frame.grid_columnconfigure(0, weight=1)
+        tree_frame.grid_rowconfigure(0, weight=1)
+
+        # Configure columns
+        self.tree.column("#0", width=400, stretch=True)
+        self.tree.column("type", width=50, stretch=False)
+        self.tree.column("path", width=400, stretch=True)
 
         # Progress Bar
         self.progress = ttk.Progressbar(self.root, orient='horizontal', mode='determinate')
@@ -118,19 +142,31 @@ class FilesSummarizer:
         button_frame.pack(fill=tk.X, padx=10, pady=5)
 
         # Copy Button
-        self.copy_button = ttk.Button(button_frame, text="📋 Copy to Clipboard", command=self.copy_to_clipboard)
+        self.copy_button = ttk.Button(
+            button_frame,
+            text="📋 Copy to Clipboard",
+            command=self.copy_to_clipboard
+        )
         self.copy_button.pack(side=tk.LEFT, padx=5)
         ToolTip(self.copy_button, "Copy the selected content to clipboard (Ctrl+C)")
         self.add_hover_effect(self.copy_button)
 
         # Remove Button
-        self.remove_button = ttk.Button(button_frame, text="🗑️ Remove Selected", command=self.remove_selected)
+        self.remove_button = ttk.Button(
+            button_frame,
+            text="🗑️ Remove Selected",
+            command=self.remove_selected
+        )
         self.remove_button.pack(side=tk.LEFT, padx=5)
         ToolTip(self.remove_button, "Remove selected items from the list (Del)")
         self.add_hover_effect(self.remove_button)
 
         # Clear Button
-        self.clear_button = ttk.Button(button_frame, text="❌ Clear All", command=self.clear_all)
+        self.clear_button = ttk.Button(
+            button_frame,
+            text="❌ Clear All",
+            command=self.clear_all
+        )
         self.clear_button.pack(side=tk.LEFT, padx=5)
         ToolTip(self.clear_button, "Clear all items from the list (Ctrl+X)")
         self.add_hover_effect(self.clear_button)
@@ -155,17 +191,9 @@ class FilesSummarizer:
         self.filepath_toggle_button.pack(side=tk.LEFT, padx=5)
         ToolTip(self.filepath_toggle_button, "Toggle filepath in output")
 
-        # Keyboard Shortcuts
-        self.root.bind('<Control-c>', lambda event: self.copy_to_clipboard())  # type: ignore
-        self.root.bind('<Delete>', lambda event: self.remove_selected())  # type: ignore
-        self.root.bind('<Control-x>', lambda event: self.clear_all())  # type: ignore
-
         # Status Bar
         status_frame = ttk.Frame(self.root, style="Status.TLabel")
         status_frame.pack(fill=tk.X, padx=10, pady=(0, 10))
-
-        self.status_icon_label = ttk.Label(status_frame, image=None)
-        self.status_icon_label.pack(side=tk.LEFT, padx=(0, 5))
 
         self.status_var = tk.StringVar(value="Welcome! Drag and drop files to begin.")
         self.status_label = ttk.Label(
@@ -174,8 +202,111 @@ class FilesSummarizer:
             style="Status.TLabel",
             anchor="w"
         )
-        self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.status_label.pack(fill=tk.X, expand=True)
 
+        # Keyboard Shortcuts
+        self.root.bind('<Control-c>', lambda event: self.copy_to_clipboard())
+        self.root.bind('<Delete>', lambda event: self.remove_selected())
+        self.root.bind('<Control-x>', lambda event: self.clear_all())
+        
+        self.tree.bind('<Delete>', self.handle_delete_key)  # Add keyboard binding
+        self.tree.bind('<Button-3>', self.show_context_menu)  # Add right-click binding
+
+
+    def handle_delete_key(self, event=None):
+        """Handle delete key press."""
+        selected_items = self.tree.selection()
+        if selected_items:
+            for item_id in selected_items:
+                self.remove_item(item_id)
+            self.update_status("Selected items deleted.", 'info')
+
+    def show_context_menu(self, event):
+        """Show context menu on right click."""
+        item_id = self.tree.identify_row(event.y)
+        
+        if item_id:
+            self.tree.selection_set(item_id)
+            menu = tk.Menu(self.root, tearoff=0)
+            menu.add_command(
+                label="Delete",
+                command=lambda: self.remove_item(item_id)
+            )
+            
+            try:
+                menu.tk_popup(event.x_root, event.y_root)
+            finally:
+                menu.grab_release()
+
+    def remove_item(self, item_id: str):
+        """Remove a single item and its empty parent folders."""
+        try:
+            # Verify item still exists
+            if not self.tree.exists(item_id):
+                return
+
+            # Get parent before deletion
+            parent_id = self.tree.parent(item_id)
+
+            # Get all child items recursively
+            items_to_remove = [item_id]
+            items_to_remove.extend(self.get_all_children(item_id))
+
+            # Remove all items
+            for item in items_to_remove:
+                if item in self.file_items:
+                    path = self.file_items[item]['path']
+                    del self.file_items[item]
+                    if path in self.path_to_id:
+                        del self.path_to_id[path]
+                if self.tree.exists(item):
+                    self.tree.delete(item)
+
+            # Clean up empty parent folders
+            self.cleanup_empty_parents(parent_id)
+
+        except Exception as e:
+            logger.error(f"Error removing item: {e}")
+            self.update_status("Error removing item.", 'error')
+
+    def cleanup_empty_parents(self, parent_id: str):
+        """Remove empty parent folders after deleting items."""
+        try:
+            current_parent = parent_id
+            while current_parent:
+                if not self.tree.exists(current_parent):
+                    break
+
+                if not self.tree.get_children(current_parent):
+                    next_parent = self.tree.parent(current_parent)
+                    
+                    # Get path from values
+                    values = self.tree.item(current_parent)['values']
+                    if values and len(values) > 1:
+                        parent_path = Path(values[1])
+                        if parent_path in self.path_to_id:
+                            del self.path_to_id[parent_path]
+                    
+                    # Delete the empty parent
+                    self.tree.delete(current_parent)
+                    current_parent = next_parent
+                else:
+                    break
+
+        except Exception as e:
+            logger.error(f"Error cleaning up parents: {e}")
+
+    def get_all_children(self, item_id: str) -> List[str]:
+        """Recursively get all children of an item."""
+        children = []
+        try:
+            for child in self.tree.get_children(item_id):
+                children.append(child)
+                children.extend(self.get_all_children(child))
+        except Exception as e:
+            logger.error(f"Error getting children: {e}")
+        return children
+    
     def add_hover_effect(self, widget: ttk.Button):
         def on_enter(e):
             widget['style'] = 'Hovered.TButton'
@@ -189,14 +320,14 @@ class FilesSummarizer:
     def setup_drag_and_drop(self):
         self.root.drop_target_register(DND_FILES)
         self.root.dnd_bind('<<Drop>>', self.handle_drop)
-
     def handle_drop(self, event):
+        """Handle drag and drop events."""
         logger.debug(f"Drop event triggered with data: {event.data}")
         paths = self.root.tk.splitlist(event.data)
         
         # Convert paths to Path objects and remove duplicates
         unique_paths = {Path(path.strip('"')) for path in paths}
-        existing_paths = {path for path in unique_paths if path in self.file_items}
+        existing_paths = {path for path in unique_paths if path in self.path_to_id}
         new_paths = unique_paths - existing_paths
         
         if not new_paths:
@@ -215,79 +346,138 @@ class FilesSummarizer:
         self.progress['value'] = 0
         
         # Process files in a separate thread
-        threading.Thread(target=self._process_dropped_items, 
-                        args=(new_paths,), 
-                        daemon=True).start()
+        threading.Thread(
+            target=self._process_dropped_items,
+            args=(new_paths,),
+            daemon=True
+        ).start()
         
         return "break"
 
     def _process_dropped_items(self, paths: set[Path]):
         """Process dropped items in a separate thread."""
         try:
-            files_added = 0
+            # Collect all valid files
+            files_to_add = []
             for path in paths:
                 if path.is_dir():
-                    files_added += self._process_directory(path)
-                else:
-                    if self._is_valid_file(path):
-                        self.root.after(0, self.add_file_item, path)
-                        files_added += 1
-                        self.progress['value'] += 1
-            
-            status_message = f"Added {files_added} file{'s' if files_added != 1 else ''}"
+                    files_to_add.extend(self.get_valid_files(path))
+                elif self._is_valid_file(path):
+                    files_to_add.append(path)
+
+            # Sort files by path
+            sorted_files = sorted(files_to_add, key=lambda p: str(p).lower())
+
+            # Add files to tree
+            for idx, file_path in enumerate(sorted_files, 1):
+                self.root.after(0, self.add_path_to_tree, file_path)
+                self.progress['value'] = (idx / len(sorted_files)) * 100
+                self.root.update_idletasks()
+
+            status_message = f"Added {len(sorted_files)} file{'s' if len(sorted_files) != 1 else ''}"
             self.root.after(0, self.update_status, status_message, 'info')
             logger.info(f"Successfully processed drop event: {status_message}")
-        
+
         except Exception as e:
             error_msg = f"Error processing dropped items: {str(e)}"
             self.root.after(0, self.show_error, error_msg)
             self.root.after(0, self.update_status, error_msg, 'error')
             logger.error(error_msg, exc_info=True)
-        
+
         finally:
             self.root.after(0, lambda: setattr(self.progress, 'value', 0))
 
-    def _process_directory(self, directory: Path) -> int:
-        """Process a directory and return the number of files added."""
-        files_added = 0
+    def add_path_to_tree(self, path: Path) -> None:
+        """Add a path to the tree view, creating parent folders as needed."""
         try:
-            for file_path in self.get_valid_files(directory):
-                self.root.after(0, self.add_file_item, file_path)
-                files_added += 1
-                self.progress['value'] += 1
-                self.root.update_idletasks()
-        except Exception as e:
-            logger.error(f"Error processing directory {directory}: {e}")
-        return files_added
+            if path in self.path_to_id:
+                return
 
-    def get_valid_files(self, directory: Path):
-        """Generator that yields valid files from a directory, including subdirectories."""
+            # Create the full path structure
+            current_path = Path()
+            current_parent = ""
+
+            # Process each part of the path
+            for part in path.parts[1:]:  # Skip the root
+                current_path = current_path / part
+                
+                # Check if this part already exists in the tree
+                existing_id = self.path_to_id.get(current_path)
+                
+                if existing_id and self.tree.exists(existing_id):
+                    # Use existing node
+                    current_parent = existing_id
+                else:
+                    # Create new node
+                    is_final = (current_path == path)
+                    
+                    if is_final:
+                        # This is the actual file
+                        file_type = self.determine_file_type(path)
+                        symbol = self.symbols.get(file_type, self.symbols['unknown'])
+                        
+                        new_id = self.tree.insert(
+                            current_parent,
+                            'end',
+                            text=part,
+                            values=(symbol, str(current_path))
+                        )
+                        
+                        self.path_to_id[current_path] = new_id
+                        self.file_items[new_id] = {
+                            'path': current_path,
+                            'type': file_type,
+                            'selected': tk.BooleanVar(value=True)
+                        }
+                    else:
+                        # This is a folder
+                        new_id = self.tree.insert(
+                            current_parent,
+                            'end',
+                            text=part,
+                            values=(self.symbols['folder'], str(current_path)),
+                            open=True
+                        )
+                        self.path_to_id[current_path] = new_id
+                    
+                    current_parent = new_id
+
+        except Exception as e:
+            logger.error(f"Error adding path to tree: {path} - {str(e)}")
+            self.update_status(f"Error adding: {path.name}", 'error')
+
+    def update_item_selection(self, item_id: str) -> None:
+        """Update the selection state of an item and its children."""
+        selected = self.file_items[item_id]['selected'].get()
+        for child_id in self.tree.get_children(item_id):
+            if child_id in self.file_items:
+                self.file_items[child_id]['selected'].set(selected)
+
+    def get_valid_files(self, directory: Path) -> List[Path]:
+        """Get all valid files from a directory recursively."""
+        valid_files = []
         try:
             for item in directory.rglob('*'):
-                # Skip system directories and hidden files
                 if self._should_skip_path(item):
                     continue
-                
                 if item.is_file() and self._is_valid_file(item):
-                    yield item
+                    valid_files.append(item)
         except PermissionError:
             logger.warning(f"Permission denied accessing {directory}")
         except Exception as e:
             logger.error(f"Error accessing {directory}: {e}")
+        return valid_files
 
     def _should_skip_path(self, path: Path) -> bool:
         """Check if a path should be skipped."""
-        # Skip hidden files and directories
         if path.name.startswith('.'):
             return True
         
-        # Skip common system directories
         system_dirs = {
             'node_modules', '__pycache__', 'venv', 'env',
             'build', 'dist', '.git', '.svn', '.hg'
         }
         
-        # Check if any parent directory should be skipped
         current = path
         while current != current.parent:
             if current.name in system_dirs:
@@ -304,160 +494,8 @@ class FilesSummarizer:
             file_path.name.lower() == 'readme.md'
         )
 
-    def add_file_item(self, path: Path):
-        frame = ttk.Frame(self.scrollable_frame.scrollable_frame, padding=5, relief=tk.RIDGE)
-        frame.pack(fill=tk.X, padx=5, pady=2)
-
-        is_folder = path.is_dir()
-
-        if is_folder:
-            file_type = 'folder'
-            symbol = self.symbols['folder']
-        elif path.suffix.lower() == ".py":
-            file_type = 'python'
-            symbol = self.symbols['python']
-        elif path.suffix.lower() == ".ts":
-            file_type = 'typescript'
-            symbol = self.symbols['typescript']
-        elif path.suffix.lower() == ".tsx":
-            file_type = 'typescriptx'
-            symbol = self.symbols['typescriptx']
-        elif path.suffix.lower() == ".css":
-            file_type = 'css'
-            symbol = self.symbols['css']
-        elif path.name.lower() == "readme.md":
-            file_type = 'readme'
-            symbol = self.symbols['readme']
-        else:
-            file_type = 'unknown'
-            symbol = self.symbols['unknown']
-
-        symbol_label = ttk.Label(frame, text=symbol)
-        symbol_label.pack(side=tk.LEFT, padx=(0, 10))
-
-        var = tk.BooleanVar(value=True)
-        check = ttk.Checkbutton(frame, variable=var)
-        check.pack(side=tk.LEFT, padx=(0, 10))
-
-        name = path.name if not is_folder else path.name.rstrip('/')
-        name_label = ttk.Label(frame, text=name, font=("Segoe UI", 10))
-        name_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-        name_label.bind("<Button-3>", lambda e, p=path: self.show_context_menu(e, p))
-
-        self.file_items[path] = {'var': var, 'frame': frame, 'type': file_type}
-
-
-    def show_context_menu(self, event, path: Path):
-        menu = tk.Menu(self.root, tearoff=0)
-        menu.add_command(label="Remove", command=lambda p=path: self.remove_single(p))  # type: ignore
-        menu.post(event.x_root, event.y_root)
-
-    def remove_single(self, path: Path):
-        item = self.file_items.pop(path, None)
-        if item:
-            item['frame'].destroy()
-            self.update_status(f"Removed: {path.name}", 'info')
-            logger.info(f"Removed: {path}")
-
-    def remove_selected(self):
-        to_remove = [path for path, item in self.file_items.items() if item['var'].get()]
-        if not to_remove:
-            self.show_warning("No items selected to remove.")
-            self.update_status("No items selected for removal.", 'warning')
-            return
-        for path in to_remove:
-            self.remove_single(path)
-        self.update_status("Selected items removed.", 'info')
-        logger.info(f"Removed selected items: {[path for path in to_remove]}")
-
-    def clear_all(self):
-        if messagebox.askyesno("Confirm Clear", "Are you sure you want to remove all items?"):
-            paths = list(self.file_items.keys())
-            for path in paths:
-                self.remove_single(path)
-            self.update_status("All items cleared.", 'info')
-            logger.info("All items cleared from the list.")
-
-    def copy_to_clipboard(self):
-        selected_paths = [path for path, item in self.file_items.items() if item['var'].get()]
-        if not selected_paths:
-            self.show_error("Please select files or folders to copy.")
-            self.update_status("No items selected to copy.", 'error')
-            logger.error("No files or folders selected.")
-            return
-
-        self.toggle_buttons(state='disabled')
-        self.progress['maximum'] = len(selected_paths)
-        self.progress['value'] = 0
-        self.update_status("Processing files...", 'info')
-        logger.info(f"Starting processing of {len(selected_paths)} items.")
-
-        threading.Thread(target=self._process_and_copy, args=(selected_paths,), daemon=True).start()
-
-    def _process_and_copy(self, selected_paths: List[Path]):
-        try:
-            py_content, ts_content, css_content, readme_content, file_count, total_characters = self.process_files(selected_paths)
-        except Exception as e:
-            logger.exception("An unexpected error occurred during file processing.")
-            self.show_error("An unexpected error occurred during processing.")
-            self.update_status("Error during processing.", 'error')
-            self.toggle_buttons(state='normal')
-            return
-
-        combined_content = "\n\n".join(py_content + ts_content + css_content)
-        if readme_content:
-            combined_content += "\n\n" + readme_content
-
-        if combined_content:
-            try:
-                self.root.clipboard_clear()
-                self.root.clipboard_append(combined_content)
-                logger.info(f"Copied content from {file_count} files, totaling {total_characters} characters.")
-                self.update_status(f"Copied content from {file_count} files, totaling {total_characters} characters.", 'info')
-            except Exception as e:
-                logger.exception("Failed to copy content to clipboard.")
-                self.show_error(f"Failed to copy to clipboard: {e}")
-                self.update_status("Failed to copy to clipboard.", 'error')
-        else:
-            self.show_warning("No eligible files found, or all files were unreadable.")
-            self.update_status("No content was copied to clipboard.", 'warning')
-            logger.warning("No eligible content to copy.")
-
-        self.progress['value'] = len(selected_paths)
-        self.toggle_buttons(state='normal')
-
-    def process_files(self, file_paths: List[Path]) -> Tuple[List[str], List[str], List[str], str, int, int]:
-        py_contents = []
-        ts_contents = []
-        css_contents = []
-        readme_content = ""
-        file_count = 0
-        total_characters = 0
-
-        for idx, path in enumerate(file_paths, start=1):
-            self.progress['value'] = idx - 1
-            self.root.update_idletasks()
-
-            logger.debug(f"Examining file or folder: {path}")
-
-            if path.is_dir():
-                for item in path.rglob('*'):
-                    if item.is_file():
-                        file_type = self.determine_file_type(item)
-                        if file_type in ['python', 'typescript', 'typescriptx', 'css', 'readme']:
-                            file_count, total_characters, py_contents, ts_contents, css_contents, readme_content = \
-                                self.process_single_file(item, py_contents, ts_contents, css_contents, readme_content, file_count, total_characters, file_type)
-            else:
-                file_type = self.determine_file_type(path)
-                if file_type in ['python', 'typescript', 'typescriptx', 'css', 'readme']:
-                    file_count, total_characters, py_contents, ts_contents, css_contents, readme_content = \
-                        self.process_single_file(path, py_contents, ts_contents, css_contents, readme_content, file_count, total_characters, file_type)
-
-        logger.debug(f"Processed {file_count} files with {total_characters} total characters.")
-        return py_contents, ts_contents, css_contents, readme_content, file_count, total_characters
-
     def determine_file_type(self, file_path: Path) -> str:
+        """Determine the type of file."""
         if file_path.is_dir():
             return 'folder'
         elif file_path.suffix.lower() == ".py":
@@ -472,91 +510,186 @@ class FilesSummarizer:
             return 'readme'
         else:
             return 'unknown'
+        
+    def copy_to_clipboard(self):
+        """Copy selected files to clipboard."""
+        selected_paths = self.get_selected_paths()
+        if not selected_paths:
+            self.show_error("Please select files to copy.")
+            self.update_status("No items selected to copy.", 'error')
+            logger.error("No files or folders selected.")
+            return
 
-    def process_single_file(
-        self,
-        file_path: Path,
-        py_contents: List[str],
-        ts_contents: List[str],
-        css_contents: List[str],
-        readme_content: str,
-        file_count: int,
-        total_characters: int,
-        file_type: str
-    ) -> Tuple[int, int, List[str], List[str], List[str], str]:
+        self.toggle_buttons(state='disabled')
+        self.progress['maximum'] = len(selected_paths)
+        self.progress['value'] = 0
+        self.update_status("Processing files...", 'info')
+        logger.info(f"Starting processing of {len(selected_paths)} items.")
+
+        threading.Thread(
+            target=self._process_and_copy,
+            args=(selected_paths,),
+            daemon=True
+        ).start()
+
+    def get_selected_paths(self) -> List[Path]:
+        """Get all selected file paths in correct order."""
+        selected = []
+        for item_id, item_data in self.file_items.items():
+            if item_data['selected'].get():
+                selected.append(item_data['path'])
+        return sorted(selected)
+
+    def _process_and_copy(self, selected_paths: List[Path]):
+        """Process selected files and copy to clipboard."""
         try:
-            with file_path.open("r", encoding="utf-8") as f:
-                content = f.read()
-
-            content_with_header = self.format_content(file_path, content, file_type)
-            if file_type == 'python':
-                py_contents.append(content_with_header)
-            elif file_type in ['typescript', 'typescriptx']:
-                ts_contents.append(content_with_header)
-            elif file_type == 'css':
-                css_contents.append(content_with_header)
-            elif file_type == 'readme':
-                readme_content = content_with_header
-
-            file_count += 1
-            total_characters += len(content)
-            logger.debug(f"Processed {file_type} file {file_path}")
-        except UnicodeDecodeError:
-            logger.warning(f"Unable to read {file_path} with UTF-8 encoding. Skipping this file.")
-            self.show_error(f"Unable to read {file_path} with UTF-8 encoding. Skipping this file.")
+            py_content, ts_content, css_content, readme_content, file_count, total_characters = \
+                self.process_files(selected_paths)
         except Exception as e:
-            logger.error(f"Error processing file {file_path}: {e}")
-            self.show_error(f"Error processing file {file_path}: {e}")
-        return file_count, total_characters, py_contents, ts_contents, css_contents, readme_content
+            logger.exception("An unexpected error occurred during file processing.")
+            self.root.after(0, self.show_error, "An unexpected error occurred during processing.")
+            self.root.after(0, self.update_status, "Error during processing.", 'error')
+            self.root.after(0, self.toggle_buttons, 'normal')
+            return
+
+        combined_content = "\n\n".join(filter(None, [
+            "\n\n".join(py_content),
+            "\n\n".join(ts_content),
+            "\n\n".join(css_content),
+            readme_content
+        ]))
+
+        if combined_content:
+            try:
+                self.root.clipboard_clear()
+                self.root.clipboard_append(combined_content)
+                status_msg = f"Copied content from {file_count} files, totaling {total_characters} characters."
+                logger.info(status_msg)
+                self.root.after(0, self.update_status, status_msg, 'info')
+            except Exception as e:
+                logger.exception("Failed to copy content to clipboard.")
+                self.root.after(0, self.show_error, f"Failed to copy to clipboard: {e}")
+                self.root.after(0, self.update_status, "Failed to copy to clipboard.", 'error')
+        else:
+            self.root.after(0, self.show_warning, "No eligible files found, or all files were unreadable.")
+            self.root.after(0, self.update_status, "No content was copied to clipboard.", 'warning')
+            logger.warning("No eligible content to copy.")
+
+        self.root.after(0, lambda: setattr(self.progress, 'value', len(selected_paths)))
+        self.root.after(0, self.toggle_buttons, 'normal')
+
+    def process_files(self, file_paths: List[Path]) -> Tuple[List[str], List[str], List[str], str, int, int]:
+        """Process files and return their contents."""
+        py_contents = []
+        ts_contents = []
+        css_contents = []
+        readme_content = ""
+        file_count = 0
+        total_characters = 0
+
+        for idx, path in enumerate(file_paths, start=1):
+            self.progress['value'] = idx - 1
+            self.root.update_idletasks()
+
+            try:
+                with path.open("r", encoding="utf-8") as f:
+                    content = f.read()
+
+                content_with_header = self.format_content(path, content, self.determine_file_type(path))
+                
+                if path.suffix.lower() == ".py":
+                    py_contents.append(content_with_header)
+                elif path.suffix.lower() in (".ts", ".tsx"):
+                    ts_contents.append(content_with_header)
+                elif path.suffix.lower() == ".css":
+                    css_contents.append(content_with_header)
+                elif path.name.lower() == "readme.md":
+                    readme_content = content_with_header
+
+                file_count += 1
+                total_characters += len(content)
+                logger.debug(f"Processed file: {path}")
+                
+            except UnicodeDecodeError:
+                logger.warning(f"Unable to read {path} with UTF-8 encoding. Skipping this file.")
+                self.root.after(0, self.show_error, f"Unable to read {path} with UTF-8 encoding. Skipping this file.")
+            except Exception as e:
+                logger.error(f"Error processing file {path}: {e}")
+                self.root.after(0, self.show_error, f"Error processing file {path}: {e}")
+
+        return py_contents, ts_contents, css_contents, readme_content, file_count, total_characters
 
     def format_content(self, file_path: Path, content: str, file_type: str) -> str:
-        content_with_header = ""
+        """Format file content with header information."""
         if self.xml_format_enabled.get():
-            content_with_header += f'<file_info>\n'
+            header = f'<file_info>\n'
             if self.filepath_enabled.get():
-                content_with_header += f'  <path>{file_path.absolute()}</path>\n'
-            content_with_header += f'  <type>{file_type}</type>\n'
-            content_with_header += f'</file_info>\n'
-            content_with_header += f'<content>\n{content}\n</content>\n\n'
+                header += f'  <path>{file_path.absolute()}</path>\n'
+            header += f'  <type>{file_type}</type>\n'
+            header += f'</file_info>\n'
+            return f'{header}<content>\n{content}\n</content>\n'
         else:
-            if self.filepath_enabled.get():
-                content_with_header += f'# {file_path.absolute()}\n'
-            content_with_header += f'{content}\n\n'
-        return content_with_header
+            header = f'# {file_path.absolute()}\n' if self.filepath_enabled.get() else ''
+            return f'{header}{content}\n'
 
-    def toggle_xml_format(self):
-        if self.xml_format_enabled.get():
-            self.update_status("XML format enabled.", 'info')
-            logger.info("XML format enabled.")
-        else:
-            self.update_status("XML format disabled.", 'info')
-            logger.info("XML format disabled.")
-        self.save_settings()
+    def remove_selected(self):
+        """Remove selected items from the tree."""
+        selected = [item_id for item_id, item in self.file_items.items() 
+                   if item['selected'].get()]
+        if not selected:
+            self.show_warning("No items selected to remove.")
+            self.update_status("No items selected for removal.", 'warning')
+            return
+        
+        for item_id in selected:
+            self.remove_item(item_id)
+        
+        self.update_status("Selected items removed.", 'info')
+        logger.info(f"Removed {len(selected)} items")
 
-    def toggle_filepath(self):
-        if self.filepath_enabled.get():
-            self.update_status("Filepath enabled.", 'info')
-            logger.info("Filepath enabled.")
-        else:
-            self.update_status("Filepath disabled.", 'info')
-            logger.info("Filepath disabled.")
-        self.save_settings()
+    def clear_all(self):
+        """Clear all items from the tree."""
+        if messagebox.askyesno("Confirm Clear", "Are you sure you want to remove all items?"):
+            self.tree.delete(*self.tree.get_children())
+            self.file_items.clear()
+            self.path_to_id.clear()
+            self.update_status("All items cleared.", 'info')
+            logger.info("All items cleared from the list.")
 
     def toggle_buttons(self, state: str = 'normal'):
+        """Toggle the state of all buttons."""
         for button in [self.copy_button, self.remove_button, self.clear_button]:
             button.config(state=state)
 
-    # Update the status update method
     def update_status(self, message: str, status_type: str = 'info'):
+        """Update the status bar with a message."""
         status_symbol = self.symbols.get(status_type, '')
         self.status_var.set(f"{status_symbol} {message}")
 
     def show_info(self, message: str):
-        messagebox.showinfo("Success", message)
+        """Show an info message."""
+        messagebox.showinfo("Information", message)
 
     def show_warning(self, message: str):
+        """Show a warning message."""
         messagebox.showwarning("Warning", message)
 
     def show_error(self, message: str):
+        """Show an error message."""
         messagebox.showerror("Error", message)
 
+    def toggle_xml_format(self):
+        """Toggle XML format setting."""
+        if self.xml_format_enabled.get():
+            self.update_status("XML format enabled.", 'info')
+        else:
+            self.update_status("XML format disabled.", 'info')
+        self.save_settings()
+
+    def toggle_filepath(self):
+        """Toggle filepath display setting."""
+        if self.filepath_enabled.get():
+            self.update_status("Filepath enabled.", 'info')
+        else:
+            self.update_status("Filepath disabled.", 'info')
+        self.save_settings()
