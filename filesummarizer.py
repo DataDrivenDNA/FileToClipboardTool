@@ -427,7 +427,7 @@ class FilesSummarizer:
         try:
             if path in self.path_to_id:
                 return
-            
+
             # Start with an empty string to use in the Treeview parent argument
             current_parent = ""
             current_path = Path()
@@ -435,51 +435,53 @@ class FilesSummarizer:
             # Use ALL parts, not just from [1:]
             for part in path.parts:
                 current_path = current_path / part
-                
+
                 # Check if this part already exists in the tree
                 existing_id = self.path_to_id.get(current_path)
-                
+
                 if existing_id and self.tree.exists(existing_id):
                     # Use existing node
                     current_parent = existing_id
                 else:
                     # Create new node
                     is_final = (current_path == path)
-                    
+
                     if is_final:
                         # This is the actual file
-                        symbol = self.determine_file_type(current_path)  # Get symbol directly
-                        file_type = 'file'  # Store basic type for internal use
-                        
+                        symbol = self.determine_file_type(current_path)  # Get symbol for UI
+                        file_type = self.get_file_type_text(
+                            current_path
+                        )  # Get text type for internal use
+
                         new_id = self.tree.insert(
                             current_parent,
-                            'end',
+                            "end",
                             text=part,
-                            values=(symbol, str(current_path))  # Use symbol directly
+                            values=(symbol, str(current_path)),  # Use symbol for UI
                         )
-                        
+
                         self.path_to_id[current_path] = new_id
                         self.file_items[new_id] = {
-                            'path': current_path,
-                            'type': file_type,
-                            'selected': tk.BooleanVar(value=True)
+                            "path": current_path,
+                            "type": file_type,  # Store text representation
+                            "selected": tk.BooleanVar(value=True),
                         }
                     else:
                         # This is a folder
                         new_id = self.tree.insert(
                             current_parent,
-                            'end',
+                            "end",
                             text=part,
-                            values=(self.symbols['folder'], str(current_path)),
-                            open=True
+                            values=(self.symbols["folder"], str(current_path)),
+                            open=True,
                         )
                         self.path_to_id[current_path] = new_id
-                    
+
                     current_parent = new_id
 
         except Exception as e:
             logger.error(f"Error adding path to tree: {path} - {str(e)}")
-            self.update_status(f"Error adding: {path.name}", 'error')
+            self.update_status(f"Error adding: {path.name}", "error")
 
     def update_item_selection(self, item_id: str) -> None:
         """Update the selection state of an item and its children."""
@@ -660,11 +662,14 @@ class FilesSummarizer:
 
     def format_content(self, file_path: Path, content: str, file_type: str) -> str:
         """Format file content with header information."""
+        # Get text representation for the file type
+        type_text = self.get_file_type_text(file_path)
+        
         if self.xml_format_enabled.get():
             header = f'<file_info>\n'
             if self.filepath_enabled.get():
                 header += f'  <path>{file_path.absolute()}</path>\n'
-            header += f'  <type>{file_type}</type>\n'
+            header += f'  <type>{type_text}</type>\n'  # Use text representation here
             header += f'</file_info>\n'
             return f'{header}<content>\n{content}\n</content>\n'
         else:
@@ -732,3 +737,20 @@ class FilesSummarizer:
         else:
             self.update_status("Filepath disabled.", 'info')
         self.save_settings()
+        
+    def get_file_type_text(self, file_path: Path) -> str:
+        """Get the text representation of the file type."""
+        if file_path.is_dir():
+            return "Folder"
+        elif file_path.suffix.lower() == ".py":
+            return "Python"
+        elif file_path.suffix.lower() == ".ts":
+            return "TypeScript"
+        elif file_path.suffix.lower() == ".tsx":
+            return "TSX"
+        elif file_path.suffix.lower() == ".css":
+            return "CSS"
+        elif file_path.name.lower() == "readme.md":
+            return "README"
+        else:
+            return "Unknown"
