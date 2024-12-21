@@ -79,18 +79,17 @@ class FilesSummarizer:
         style.configure("TCheckbutton", font=("Segoe UI", 10))
         style.configure("Hovered.TButton", background='#e0e0e0')
 
-        # Load icons
-        self.icons = {
-            'folder': self.load_icon("icons/folder.png"),
-            'python': self.load_icon("icons/python.png"),
-            'typescript': self.load_icon("icons/typescript.png"),
-            'typescriptx': self.load_icon("icons/typescriptx.png"),
-            'css': self.load_icon("icons/css.png"),
-            'readme': self.load_icon("icons/readme.png"),
-            'unknown': self.load_icon("icons/unknown.png"),
-            'info': self.load_icon("icons/info.png"),
-            'warning': self.load_icon("icons/warning.png"),
-            'error': self.load_icon("icons/error.png"),
+        self.symbols = {
+            'folder': "📁",
+            'python': "🐍",
+            'typescript': "📘",
+            'typescriptx': "📗",
+            'css': "🎨",
+            'readme': "📄",
+            'unknown': "❓",
+            'info': "ℹ️",
+            'warning': "⚠️",
+            'error': "❌",
         }
 
         # Header
@@ -176,16 +175,6 @@ class FilesSummarizer:
             anchor="w"
         )
         self.status_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
-
-    def load_icon(self, path: str) -> ImageTk.PhotoImage:
-        try:
-            image = Image.open(path)
-            image = image.resize((16, 16), Image.ANTIALIAS)
-            return ImageTk.PhotoImage(image)
-        except Exception as e:
-            logger.error(f"Error loading icon '{path}': {e}")
-            # Return a blank image to avoid crashes
-            return ImageTk.PhotoImage(Image.new('RGBA', (16, 16), (255, 0, 0, 0)))
 
     def add_hover_effect(self, widget: ttk.Button):
         def on_enter(e):
@@ -323,29 +312,28 @@ class FilesSummarizer:
 
         if is_folder:
             file_type = 'folder'
-            icon = self.icons.get('folder')
+            symbol = self.symbols['folder']
         elif path.suffix.lower() == ".py":
             file_type = 'python'
-            icon = self.icons.get('python')
+            symbol = self.symbols['python']
         elif path.suffix.lower() == ".ts":
             file_type = 'typescript'
-            icon = self.icons.get('typescript')
+            symbol = self.symbols['typescript']
         elif path.suffix.lower() == ".tsx":
             file_type = 'typescriptx'
-            icon = self.icons.get('typescriptx')
+            symbol = self.symbols['typescriptx']
         elif path.suffix.lower() == ".css":
             file_type = 'css'
-            icon = self.icons.get('css')
+            symbol = self.symbols['css']
         elif path.name.lower() == "readme.md":
             file_type = 'readme'
-            icon = self.icons.get('readme')
+            symbol = self.symbols['readme']
         else:
             file_type = 'unknown'
-            icon = self.icons.get('unknown')
+            symbol = self.symbols['unknown']
 
-        icon_label = ttk.Label(frame, image=icon)
-        icon_label.image = icon  # Keep a reference to prevent garbage collection
-        icon_label.pack(side=tk.LEFT, padx=(0, 10))
+        symbol_label = ttk.Label(frame, text=symbol)
+        symbol_label.pack(side=tk.LEFT, padx=(0, 10))
 
         var = tk.BooleanVar(value=True)
         check = ttk.Checkbutton(frame, variable=var)
@@ -355,9 +343,10 @@ class FilesSummarizer:
         name_label = ttk.Label(frame, text=name, font=("Segoe UI", 10))
         name_label.pack(side=tk.LEFT, fill=tk.X, expand=True)
 
-        name_label.bind("<Button-3>", lambda e, p=path: self.show_context_menu(e, p))  # type: ignore
+        name_label.bind("<Button-3>", lambda e, p=path: self.show_context_menu(e, p))
 
         self.file_items[path] = {'var': var, 'frame': frame, 'type': file_type}
+
 
     def show_context_menu(self, event, path: Path):
         menu = tk.Menu(self.root, tearoff=0)
@@ -557,16 +546,10 @@ class FilesSummarizer:
         for button in [self.copy_button, self.remove_button, self.clear_button]:
             button.config(state=state)
 
+    # Update the status update method
     def update_status(self, message: str, status_type: str = 'info'):
-        self.status_var.set(message)
-        if status_type == 'info':
-            self.status_icon_label.config(image=self.icons.get('info'))
-        elif status_type == 'warning':
-            self.status_icon_label.config(image=self.icons.get('warning'))
-        elif status_type == 'error':
-            self.status_icon_label.config(image=self.icons.get('error'))
-        else:
-            self.status_icon_label.config(image=None)
+        status_symbol = self.symbols.get(status_type, '')
+        self.status_var.set(f"{status_symbol} {message}")
 
     def show_info(self, message: str):
         messagebox.showinfo("Success", message)

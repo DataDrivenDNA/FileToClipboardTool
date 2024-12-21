@@ -46,7 +46,7 @@ A user-friendly GUI application that allows you to easily collect and copy conte
 1. **Run the application:**
 
     ```bash
-    python pythonfilesmmerizer_UI.py
+    python main.py
     ```
 
 2. **Add files/folders using any of these methods:**
