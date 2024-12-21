@@ -83,6 +83,18 @@ class FilesSummarizer:
     def create_widgets(self):
         style = ttk.Style(self.root)
         style.theme_use('clam')
+    
+        # Add these style configurations
+        style.configure("Treeview.Heading",
+        font=("Segoe UI", 10, "bold"),
+        padding=5
+        )
+        style.configure("Treeview",
+        font=("Segoe UI", 10),
+        rowheight=25  # Increase row height to better show icons
+        )
+        
+        style.theme_use('clam')
         style.configure("TButton", font=("Segoe UI", 10), padding=6)
         style.configure("TLabel", font=("Segoe UI", 11))
         style.configure("Header.TLabel", font=("Segoe UI", 16, "bold"), background="#ffffff")
@@ -112,9 +124,20 @@ class FilesSummarizer:
         self.tree = ttk.Treeview(
             tree_frame,
             columns=("type", "path"),
-            show="tree headings",
-            selectmode="extended"  # Changed from "none" to "extended"
-    )
+            show="tree headings",  # Show both tree and column headings
+            selectmode="extended"
+        )
+        
+        # Configure columns and headings
+        self.tree.column("#0", width=400, stretch=True)
+        self.tree.column("type", width=50, stretch=False, anchor="center")
+        self.tree.column("path", width=400, stretch=True)
+        
+        # Add column headings
+        self.tree.heading("#0", text="File Name", anchor="w")
+        self.tree.heading("type", text="Type", anchor="center")
+        self.tree.heading("path", text="Path", anchor="w")
+        
         # Scrollbars
         vsb = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree.yview)
         hsb = ttk.Scrollbar(tree_frame, orient="horizontal", command=self.tree.xview)
@@ -241,33 +264,38 @@ class FilesSummarizer:
     def remove_item(self, item_id: str):
         """Remove a single item and its empty parent folders."""
         try:
-            # Verify item still exists
             if not self.tree.exists(item_id):
                 return
 
-            # Get parent before deletion
             parent_id = self.tree.parent(item_id)
-
-            # Get all child items recursively
             items_to_remove = [item_id]
             items_to_remove.extend(self.get_all_children(item_id))
 
-            # Remove all items
             for item in items_to_remove:
+                # If the item is a file, remove it from file_items
                 if item in self.file_items:
                     path = self.file_items[item]['path']
                     del self.file_items[item]
                     if path in self.path_to_id:
                         del self.path_to_id[path]
+                else:
+                    # If the item is a folder, get the path from the tree's values
+                    values = self.tree.item(item, 'values')
+                    if values:
+                        folder_path = Path(values[-1])
+                        if folder_path in self.path_to_id:
+                            del self.path_to_id[folder_path]
+
                 if self.tree.exists(item):
                     self.tree.delete(item)
 
-            # Clean up empty parent folders
+            # Clean up empty parents
             self.cleanup_empty_parents(parent_id)
 
         except Exception as e:
             logger.error(f"Error removing item: {e}")
             self.update_status("Error removing item.", 'error')
+
 
     def cleanup_empty_parents(self, parent_id: str):
         """Remove empty parent folders after deleting items."""
@@ -320,6 +348,7 @@ class FilesSummarizer:
     def setup_drag_and_drop(self):
         self.root.drop_target_register(DND_FILES)
         self.root.dnd_bind('<<Drop>>', self.handle_drop)
+        
     def handle_drop(self, event):
         """Handle drag and drop events."""
         logger.debug(f"Drop event triggered with data: {event.data}")
@@ -342,19 +371,21 @@ class FilesSummarizer:
             else:
                 total_files += 1
         
-        self.progress['maximum'] = total_files
+        # **Option B Correction**: Set maximum to 100 for percentage-based progress
+        self.progress['maximum'] = 100
         self.progress['value'] = 0
         
         # Process files in a separate thread
         threading.Thread(
             target=self._process_dropped_items,
-            args=(new_paths,),
+            args=(new_paths, total_files),  # Pass total_files for percentage calculation
             daemon=True
         ).start()
         
         return "break"
 
-    def _process_dropped_items(self, paths: set[Path]):
+
+    def _process_dropped_items(self, paths: set[Path], total_files: int):
         """Process dropped items in a separate thread."""
         try:
             # Collect all valid files
@@ -371,7 +402,9 @@ class FilesSummarizer:
             # Add files to tree
             for idx, file_path in enumerate(sorted_files, 1):
                 self.root.after(0, self.add_path_to_tree, file_path)
-                self.progress['value'] = (idx / len(sorted_files)) * 100
+                # **Option B Correction**: Calculate percentage based on total_files
+                progress_percent = (idx / total_files) * 100 if total_files > 0 else 100
+                self.progress['value'] = progress_percent
                 self.root.update_idletasks()
 
             status_message = f"Added {len(sorted_files)} file{'s' if len(sorted_files) != 1 else ''}"
@@ -385,20 +418,22 @@ class FilesSummarizer:
             logger.error(error_msg, exc_info=True)
 
         finally:
-            self.root.after(0, lambda: setattr(self.progress, 'value', 0))
+            # **Option B Correction**: Set progress to 100% upon completion
+            self.root.after(0, lambda: setattr(self.progress, 'value', 100))
+
 
     def add_path_to_tree(self, path: Path) -> None:
         """Add a path to the tree view, creating parent folders as needed."""
         try:
             if path in self.path_to_id:
                 return
-
-            # Create the full path structure
-            current_path = Path()
+            
+            # Start with an empty string to use in the Treeview parent argument
             current_parent = ""
+            current_path = Path()
 
-            # Process each part of the path
-            for part in path.parts[1:]:  # Skip the root
+            # Use ALL parts, not just from [1:]
+            for part in path.parts:
                 current_path = current_path / part
                 
                 # Check if this part already exists in the tree
@@ -413,14 +448,14 @@ class FilesSummarizer:
                     
                     if is_final:
                         # This is the actual file
-                        file_type = self.determine_file_type(path)
-                        symbol = self.symbols.get(file_type, self.symbols['unknown'])
+                        symbol = self.determine_file_type(current_path)  # Get symbol directly
+                        file_type = 'file'  # Store basic type for internal use
                         
                         new_id = self.tree.insert(
                             current_parent,
                             'end',
                             text=part,
-                            values=(symbol, str(current_path))
+                            values=(symbol, str(current_path))  # Use symbol directly
                         )
                         
                         self.path_to_id[current_path] = new_id
@@ -495,21 +530,21 @@ class FilesSummarizer:
         )
 
     def determine_file_type(self, file_path: Path) -> str:
-        """Determine the type of file."""
+        """Determine the type of file and return the corresponding symbol."""
         if file_path.is_dir():
-            return 'folder'
+            return self.symbols['folder']
         elif file_path.suffix.lower() == ".py":
-            return 'python'
+            return self.symbols['python']
         elif file_path.suffix.lower() == ".ts":
-            return 'typescript'
+            return self.symbols['typescript']
         elif file_path.suffix.lower() == ".tsx":
-            return 'typescriptx'
+            return self.symbols['typescriptx']
         elif file_path.suffix.lower() == ".css":
-            return 'css'
+            return self.symbols['css']
         elif file_path.name.lower() == "readme.md":
-            return 'readme'
+            return self.symbols['readme']
         else:
-            return 'unknown'
+            return self.symbols['unknown']
         
     def copy_to_clipboard(self):
         """Copy selected files to clipboard."""
@@ -521,7 +556,8 @@ class FilesSummarizer:
             return
 
         self.toggle_buttons(state='disabled')
-        self.progress['maximum'] = len(selected_paths)
+        # **Option B Correction**: Set maximum to 100 for percentage-based progress
+        self.progress['maximum'] = 100
         self.progress['value'] = 0
         self.update_status("Processing files...", 'info')
         logger.info(f"Starting processing of {len(selected_paths)} items.")
@@ -531,6 +567,7 @@ class FilesSummarizer:
             args=(selected_paths,),
             daemon=True
         ).start()
+
 
     def get_selected_paths(self) -> List[Path]:
         """Get all selected file paths in correct order."""
@@ -575,8 +612,10 @@ class FilesSummarizer:
             self.root.after(0, self.update_status, "No content was copied to clipboard.", 'warning')
             logger.warning("No eligible content to copy.")
 
-        self.root.after(0, lambda: setattr(self.progress, 'value', len(selected_paths)))
+        # **Option B Correction**: Update progress as percentage
+        self.root.after(0, lambda: setattr(self.progress, 'value', 100))
         self.root.after(0, self.toggle_buttons, 'normal')
+
 
     def process_files(self, file_paths: List[Path]) -> Tuple[List[str], List[str], List[str], str, int, int]:
         """Process files and return their contents."""
