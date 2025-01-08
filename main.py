@@ -1,7 +1,7 @@
 import logging
 from tkinterdnd2 import TkinterDnD  # type: ignore
 from filesummarizer import FilesSummarizer
-
+import logger_config  # Import to initialize logging
 
 def main():
     # Initialize the TkinterDnD root window and start the application
